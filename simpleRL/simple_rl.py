@@ -79,23 +79,17 @@ def _q_function(s, a=None, dropout=False):
     _hidden = tf.layers.dense(s, 10, activation=tf.nn.relu, name='dense_1')
     if dropout:
         _hidden = tf.nn.dropout(_hidden, 0.5)
-    _all_q = tf.layers.dense(_hidden, len(possible_actions) + 2, name='dense_2')
-    _value = _all_q[:,-1] - 4
-    _action_prob = tf.nn.softmax(_all_q[:,:len(possible_actions)])
-    _advantage = tf.nn.elu(_all_q[:,-2]) * 0.01
-    #_action_prob = _all_q[:,:len(possible_actions)]
-    #_advantage = 1
+    _all_q = tf.layers.dense(_hidden, len(possible_actions), name='dense_2')
     if a is not None:
-        _Q = _value + _advantage * _action_prob[:, a]
+        _Q =  _all_q[:, a]
     else:
-        _Q = _value + _advantage * tf.reduce_max(_action_prob, 1)
-    return _Q, _action_prob
+        _Q = tf.reduce_max(_all_q, 1)
+    return _Q, _all_q
 q_function = tf.make_template('q_function', _q_function)
 _s = tf.reshape(in_s, [1, np.prod(in_dimen)])
 _s_next = tf.reshape(in_s_next, [1, np.prod(in_dimen)])
-Q, prob_out = q_function(_s, in_action, dropout=False)
+Q, all_Q = q_function(_s, in_action, dropout=False)
 Q_next, _ = q_function(_s_next)
-prob_out = prob_out[0, :]
 new_Q = in_reward + DECAY_FACTOR * Q_next
 loss = tf.reduce_sum((Q - tf.stop_gradient(new_Q))**2)
 
@@ -119,13 +113,13 @@ for epoch_i in range(MAX_EPOCHS):
         #if step % 10 == 0:
         env.render()
         #    pass
-        prob = prob_out.eval({in_s: prepare_data(observation_prev)})
+        prob = all_Q.eval({in_s: prepare_data(observation_prev)})
         if step % 10 == 0:
             print(prob)
-        if random.random() < -10.9:
+        if random.random() < 0.9:
             action = np.argmax(prob)
         else:
-            action = np.random.choice(len(possible_actions), p=prob)
+            action = np.random.choice(len(possible_actions))
         #real_action = np.sum(possible_actions * prob.reshape([len(possible_actions), 1]), axis=0)
         real_action = possible_actions[action]# * prob[action]
         observation, reward, done, info = env.step(real_action)
