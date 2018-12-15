@@ -8,9 +8,10 @@ from model2 import Actor, Critic
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+import os
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
-BATCH_SIZE = 128  # minibatch size
+BATCH_SIZE = 32  # minibatch size
 GAMMA = 0.99  # discount factor
 TAU = 1e-3  # for soft update of target parameters
 LR_ACTOR = 1e-4  # learning rate of the actor
@@ -19,11 +20,13 @@ WEIGHT_DECAY = 0  # L2 weight decay
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+os.makedirs('data', exist_ok=True)
+
 
 class Agent():
     """Interacts with and learns from the environment."""
 
-    def __init__(self, state_size, action_size, random_seed):
+    def __init__(self, state_size, action_size, random_seed, learn_every):
         """Initialize an Agent object.
 
         Params
@@ -32,11 +35,12 @@ class Agent():
             action_size (int): dimension of each action
             random_seed (int): random seed
         """
-        self.state_size = state_size
-        self.action_size = action_size
         self.seed = random.seed(random_seed)
 
         # Actor Network (w/ Target Network)
+        self.state_size = state_size
+        self.action_size = action_size
+        self.learn_every = learn_every
         self.actor_local = Actor(state_size, action_size, random_seed).to(device)
         self.actor_target = Actor(state_size, action_size, random_seed).to(device)
         self.actor_optimizer = optim.Adam(self.actor_local.parameters(), lr=LR_ACTOR)
@@ -58,7 +62,7 @@ class Agent():
         self.memory.add(state, action, reward, next_state, done)
 
         # Learn, if enough samples are available in memory
-        if len(self.memory) > BATCH_SIZE:
+        if len(self.memory) > BATCH_SIZE and len(self.memory) % self.learn_every == 0:
             experiences = self.memory.sample()
             self.learn(experiences, GAMMA)
 
@@ -157,23 +161,35 @@ class OUNoise:
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
 
-    def __init__(self, action_size, buffer_size, batch_size, seed):
+    def __init__(self, action_size, buffer_size, batch_size, seed,
+                 save_every=0, save_every_n=0, quant_info=(-10, 10, 5)):
         """Initialize a ReplayBuffer object.
         Params
         ======
             buffer_size (int): maximum size of buffer
             batch_size (int): size of each training batch
         """
+        self.quant_info = quant_info
         self.action_size = action_size
         self.memory = deque(maxlen=buffer_size)  # internal memory (deque)
         self.batch_size = batch_size
         self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
+        self.save_every = save_every
+        self.save_every_n = save_every_n
+        self.last_saved = 0
 
     def add(self, state, action, reward, next_state, done):
         """Add a new experience to memory."""
         e = self.experience(state, action, reward, next_state, done)
         self.memory.append(e)
+
+        if len(self.experience)-self.last_saved>self.save_every:
+            to_save = [[] for _ in range((self.quant_info[1]-self.quant_info[0])//self.quant_info[2])]
+            for idx in range(self.last_saved+1, len(self.memory), self.save_every_n):
+                exp = self.memory[idx]
+                quant_idx = (exp.reward - self.quant_info[1])
+                to_save[quant_idx].append(self.memory[idx])
 
     def sample(self):
         """Randomly sample a batch of experiences from memory."""

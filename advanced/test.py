@@ -25,7 +25,7 @@ try:
             tick = counter + 1
             counter = tick
             action = env.action_space.sample() # take a random action
-            action = [1, 1, 0]
+            action = [0, 1, 0]
             observation, reward, done, info = env.step(action)
             env.render()
             print(j)
