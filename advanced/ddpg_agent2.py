@@ -9,6 +9,10 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import os
+import pickle
+from uuid import uuid4
+from glob import glob
+import numpy as np
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 32  # minibatch size
@@ -19,9 +23,20 @@ LR_CRITIC = 1e-3  # learning rate of the critic
 WEIGHT_DECAY = 0  # L2 weight decay
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
 
 os.makedirs('data', exist_ok=True)
 
+def batch_from_sample(exps):
+    states = torch.from_numpy(np.vstack([e.state for e in exps if e is not None])).float().to(device)
+    actions = torch.from_numpy(np.vstack([e.action for e in exps if e is not None])).float().to(device)
+    rewards = torch.from_numpy(np.vstack([e.reward for e in exps if e is not None])).float().to(device)
+    next_states = torch.from_numpy(np.vstack([e.next_state for e in exps if e is not None])).float().to(
+        device)
+    dones = torch.from_numpy(np.vstack([e.done for e in exps if e is not None]).astype(np.uint8)).float().to(
+        device)
+
+    return (states, actions, rewards, next_states, dones)
 
 class Agent():
     """Interacts with and learns from the environment."""
@@ -61,11 +76,6 @@ class Agent():
         # Save experience / reward
         self.memory.add(state, action, reward, next_state, done)
 
-        # Learn, if enough samples are available in memory
-        if len(self.memory) > BATCH_SIZE and len(self.memory) % self.learn_every == 0:
-            experiences = self.memory.sample()
-            self.learn(experiences, GAMMA)
-
     def act(self, state, add_noise=True):
         """Returns actions for given state as per current policy."""
         state = torch.from_numpy(state).float().to(device)
@@ -79,6 +89,16 @@ class Agent():
 
     def reset(self):
         self.noise.reset()
+
+    def learn_from_file(self):
+        try:
+            file = np.random.choice(glob('data/*.*'))
+            exps = pickle.load(open(file, 'rb'))
+            exps = [experience(**exp) for exp in exps]
+            exps = batch_from_sample(exps)
+            self.learn(exps, GAMMA)
+        except EOFError:
+            pass
 
     def learn(self, experiences, gamma):
         """Update policy and value parameters using given batch of experience tuples.
@@ -157,53 +177,36 @@ class OUNoise:
         self.state = x + dx
         return self.state
 
-
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
 
     def __init__(self, action_size, buffer_size, batch_size, seed,
-                 save_every=0, save_every_n=0, quant_info=(-10, 10, 5)):
+                 save_every_n=128):
         """Initialize a ReplayBuffer object.
         Params
         ======
             buffer_size (int): maximum size of buffer
             batch_size (int): size of each training batch
         """
-        self.quant_info = quant_info
         self.action_size = action_size
         self.memory = deque(maxlen=buffer_size)  # internal memory (deque)
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
-        self.save_every = save_every
         self.save_every_n = save_every_n
-        self.last_saved = 0
 
     def add(self, state, action, reward, next_state, done):
         """Add a new experience to memory."""
-        e = self.experience(state, action, reward, next_state, done)
+        e = experience(state, action, reward, next_state, done)
         self.memory.append(e)
 
-        if len(self.experience)-self.last_saved>self.save_every:
-            to_save = [[] for _ in range((self.quant_info[1]-self.quant_info[0])//self.quant_info[2])]
-            for idx in range(self.last_saved+1, len(self.memory), self.save_every_n):
-                exp = self.memory[idx]
-                quant_idx = (exp.reward - self.quant_info[1])
-                to_save[quant_idx].append(self.memory[idx])
+        if len(self.memory)>=self.save_every_n:
+            pickle.dump([m._asdict() for m in self.memory], open(f'data/{uuid4()}.p', 'wb'))
+            self.memory = []
 
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
         experiences = random.sample(self.memory, k=self.batch_size)
-
-        states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
-        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(device)
-        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
-        next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(
-            device)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(
-            device)
-
-        return (states, actions, rewards, next_states, dones)
+        return batch_from_sample(experiences)
 
     def __len__(self):
         """Return the current size of internal memory."""
