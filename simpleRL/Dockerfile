@@ -1,5 +1,15 @@
 FROM pytorch/pytorch
 
+RUN export DEBIAN_FRONTEND=noninteractive \
+	&& apt-get update -qq && apt-get upgrade -qq \
+    && apt-get install -y --no-install-recommends \
+		nginx \
+        supervisor \
+    && BUILD_DEPS='build-essential git' \
+    && apt-get install -y --no-install-recommends ${BUILD_DEPS} \
+    && pip3 install -U pip setuptools \
+    && pip3 install -U uwsgi
+
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
     xvfb \
     freeglut3-dev \
