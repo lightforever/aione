@@ -8,7 +8,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     libopencv-dev python-opencv && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install numpy tensorflow opencv-python gym PyVirtualDisplay
+RUN pip install numpy tensorflow opencv-python gym PyVirtualDisplay Box2D
 
 WORKDIR /pytorch_car_caring
 
