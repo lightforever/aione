@@ -32,7 +32,6 @@ possible_actions = np.array([
     [0.0, 0.0, 0.8], # break
     [0.0, 0.0, 0.0], # rest
 ]).astype(np.float32)
-env = gym.make(GAME)
 
 in_dimen = (16, 16, 4)
 out_dimen = (3,)
@@ -91,16 +90,18 @@ try:
         for j in range(1000):
             tick = counter + 1
             counter = tick
-            action = all_q.eval({in_s: prepare_data(state)})
-            action = [0, 1, 0]
+            action = all_q.eval({in_s: prepare_data(state)})[0]
             state, reward, done, info = env.step(action)
             env.render()
             print(j)
-            if done and env.env.tile_visited_count == len(env.env.track):
+            if done and env.env.env.tile_visited_count == len(env.env.env.track):
                 total_score += 1000 - 0.1 * j
                 print("Episode {0} finished".format(i + 1), 1000 - 0.1 * j)
                 # env.monitor.close()
                 break
+            elif done:
+                break
+
     print(total_score)
 except KeyboardInterrupt:
     sys.exit()
