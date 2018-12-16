@@ -21,11 +21,11 @@ def prepare_data(x):
 GAME = 'CarRacing-v0'
 MAX_STEPS = 200
 MAX_EPOCHS = 1000
-DECAY_FACTOR = 0.8
+DECAY_FACTOR = 0.95
 possible_actions = np.array([
     [-1., 0.0, 0.0], # left
     [1.0, 0.0, 0.0], # right
-    [0.0, 1.0, 0.0], # go
+    [0.0, 0.2, 0.0], # go
     [0.0, 0.0, 0.8], # break
     [0.0, 0.0, 0.0], # rest
 ]).astype(np.float32)
@@ -56,13 +56,13 @@ def _q_function(s, a=None, dropout=False):
 q_function = tf.make_template('q_function', _q_function)
 _s = tf.reshape(in_s, [1, np.prod(in_dimen)])
 _s_next = tf.reshape(in_s_next, [1, np.prod(in_dimen)])
-Q, all_q = q_function(_s, in_action, dropout=True)
+Q, all_q = q_function(_s, in_action, dropout=False)
 Q_next, _ = q_function(_s_next)
 new_Q = in_reward + DECAY_FACTOR * Q_next
 loss = tf.reduce_sum((Q - tf.stop_gradient(new_Q))**2)
 
 # Tensorflow operations
-train_op = tf.train.GradientDescentOptimizer(learning_rate=0.001).minimize(loss)
+train_op = tf.train.GradientDescentOptimizer(learning_rate=0.0001).minimize(loss)
 sess = tf.InteractiveSession()
 init = tf.global_variables_initializer()
 saver = tf.train.Saver()
@@ -86,7 +86,7 @@ for epoch_i in range(MAX_EPOCHS):
         prob = all_q.eval({in_s: prepare_data(observation_prev)})
         if step % 10 == 0:
             print(prob)
-        if random.random() < 10.9:
+        if random.random() < 0.9:
             action = np.argmax(prob)
         else:
             action = np.random.choice(len(possible_actions))
