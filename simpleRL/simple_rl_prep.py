@@ -6,57 +6,22 @@ import tensorflow as tf
 
 #tf.logging.set_verbosity(tf.logging.INFO)
 
-def replayBestBots(bestNeuralNets, steps, sleep):  
-    choice = input("Do you want to watch the replay ?[Y/N] : ")
-    if choice=='Y' or choice=='y':
-        for i in range(len(bestNeuralNets)):
-            if (i+1)%steps == 0 :
-                observation = env.reset()
-                totalReward = 0
-                for step in range(MAX_STEPS):
-                    env.render()
-                    time.sleep(sleep)
-                    action = bestNeuralNets[i].getOutput(observation)
-                    observation, reward, done, info = env.step(action)
-                    totalReward += reward
-                    if done:
-                        observation = env.reset()
-                        break
-                print("Generation %3d | Expected Fitness of %4d | Actual Fitness = %4d" % (i+1, bestNeuralNets[i].fitness, totalReward))
-
-
-def recordBestBots(bestNeuralNets):  
-    print("\n Recording Best Bots ")
-    print("---------------------")
-    env.monitor.start('Artificial Intelligence/'+GAME, force=True)
-    observation = env.reset()
-    for i in range(len(bestNeuralNets)):
-        totalReward = 0
-        for step in range(MAX_STEPS):
-            env.render()
-            action = bestNeuralNets[i].getOutput(observation)
-            observation, reward, done, info = env.step(action)
-            totalReward += reward
-            if done:
-                observation = env.reset()
-                break
-        print("Generation %3d | Expected Fitness of %4d | Actual Fitness = %4d" % (i+1, bestNeuralNets[i].fitness, totalReward))
-    env.monitor.close()
-
-
-def uploadSimulation():
-    API_KEY = open('/home/dollarakshay/Documents/API Keys/Open AI Key.txt', 'r').read().rstrip()
-    gym.upload('Artificial Intelligence/'+GAME, api_key=API_KEY)
-
 def prepare_data(x):
     x = x / 255
-    x = cv2.resize(x, (16, 16))
+    wh = 16
+    mask = cv2.inRange(x, np.array([0, 0., 0]), np.array([1, 0.5, 1])) / 255
+    x = cv2.resize(x[84:, :, :], (wh, wh))
+    mask = cv2.resize(mask, (wh, wh)).reshape([wh, wh, 1])
+    #x += mask
+    cv2.imshow('mask', x)
+    cv2.waitKey(1)
+    x = np.concatenate([x, mask], axis=2)
     return x - 0.5
 
 GAME = 'CarRacing-v0'
 MAX_STEPS = 200
 MAX_EPOCHS = 1000
-DECAY_FACTOR = 0.95
+DECAY_FACTOR = 0.8
 possible_actions = np.array([
     [-1., 0.0, 0.0], # left
     [1.0, 0.0, 0.0], # right
@@ -76,8 +41,10 @@ in_s_next = tf.placeholder(tf.float32, in_dimen)
 in_action = tf.placeholder(tf.int32, [])
 in_reward = tf.placeholder(tf.float32, [])
 def _q_function(s, a=None, dropout=False):
-    _hidden = tf.layers.dense(s, 10, activation=tf.nn.relu, name='dense_1')
-    _hidden = tf.layers.dense(_hidden, 10, activation=tf.nn.relu, name='dense_2')
+    _hidden = tf.layers.dense(s, 20, activation=tf.nn.relu, name='dense_1')
+    if dropout:
+        _hidden = tf.nn.dropout(_hidden, 0.5)
+    _hidden = tf.layers.dense(_hidden, 30, activation=tf.nn.relu, name='dense_2')
     if dropout:
         _hidden = tf.nn.dropout(_hidden, 0.5)
     _all_q = tf.layers.dense(_hidden, len(possible_actions), name='dense_3')
@@ -89,16 +56,18 @@ def _q_function(s, a=None, dropout=False):
 q_function = tf.make_template('q_function', _q_function)
 _s = tf.reshape(in_s, [1, np.prod(in_dimen)])
 _s_next = tf.reshape(in_s_next, [1, np.prod(in_dimen)])
-Q, all_Q = q_function(_s, in_action, dropout=False)
+Q, all_q = q_function(_s, in_action, dropout=True)
 Q_next, _ = q_function(_s_next)
 new_Q = in_reward + DECAY_FACTOR * Q_next
 loss = tf.reduce_sum((Q - tf.stop_gradient(new_Q))**2)
 
 # Tensorflow operations
-train_op = tf.train.GradientDescentOptimizer(learning_rate=0.0001).minimize(loss)
+train_op = tf.train.GradientDescentOptimizer(learning_rate=0.001).minimize(loss)
 sess = tf.InteractiveSession()
 init = tf.global_variables_initializer()
+saver = tf.train.Saver()
 sess.run(init)
+saver.restore(sess, "./tmp/model.ckpt")
 
 env.render()
 
@@ -114,10 +83,10 @@ for epoch_i in range(MAX_EPOCHS):
         #if step % 10 == 0:
         env.render()
         #    pass
-        prob = all_Q.eval({in_s: prepare_data(observation_prev)})
+        prob = all_q.eval({in_s: prepare_data(observation_prev)})
         if step % 10 == 0:
             print(prob)
-        if random.random() < 0.9:
+        if random.random() < 10.9:
             action = np.argmax(prob)
         else:
             action = np.random.choice(len(possible_actions))
@@ -126,6 +95,8 @@ for epoch_i in range(MAX_EPOCHS):
         observation, reward, done, info = env.step(real_action)
         reward = min(reward, 2)
         reward = max(reward, -2)
+        #if reward < 0:
+        #    reward = -10
         temp_samples.append({in_s: prepare_data(observation_prev), in_action: action,
                     in_s_next: prepare_data(observation)})
         rewards.append(reward)
@@ -141,16 +112,12 @@ for epoch_i in range(MAX_EPOCHS):
             mult *= DECAY_FACTOR
         temp_samples[i][in_reward] = rewards[i]
         train_samples.append(temp_samples[i])
-    for _ in range(10):
+    for _ in range(min(10, len(train_samples) // 100)):
         random.shuffle(train_samples)
         for ts in train_samples[:1000]:
             train_op.run(ts)
-    train_samples = train_samples[:10000]
+    train_samples = train_samples[:100000]
     print("Epoch : %3d  |  Reward : %5.0f  " % (epoch_i+1, totalReward) )
-
-recordBestBots(bestNeuralNets)
-
-uploadSimulation()
-
-replayBestBots(bestNeuralNets, max(1, int(math.ceil(MAX_GENERATIONS/10.0))), 0.0625)
+    save_path = saver.save(sess, "./tmp/model.ckpt")
+    print("Model saved in path: %s" % save_path)
 
